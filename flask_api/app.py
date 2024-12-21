@@ -1,9 +1,8 @@
 import threading
-import concurrent.futures
 import schedule
 import logging
 import time
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
 import os
@@ -17,33 +16,38 @@ app = Flask(__name__)
 CORS(app)
 
 # Load the trained model
-rf_model = joblib.load('models/random_forest_model_v1.pkl')
+MODEL_PATH = 'model/random_forest_model_v1.pkl'
+try:
+    rf_model = joblib.load(MODEL_PATH)
+    logging.info(f"Model loaded successfully from {MODEL_PATH}")
+except FileNotFoundError:
+    logging.error(f"Model file not found at {MODEL_PATH}")
+    rf_model = None
 
+# Kafka producer and consumer
+producer = create_producer()
+consumer = create_consumer('app_activity')
+
+# Stop event for threads
+stop_event = threading.Event()
+
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 
+# Kafka Producer Thread
 def start_kafka_producer(producer, stop_event):
+    logging.info("Starting Kafka producer...")
     schedule.every(1).seconds.do(lambda: produce_events(producer, stop_event))
     while not stop_event.is_set():
         schedule.run_pending()
         time.sleep(1)
 
+# Kafka Consumer Thread
 def start_kafka_consumer(consumer):
+    logging.info("Starting Kafka consumer...")
     consume_events(consumer)
 
-# Initialize Kafka producer and consumer
-producer = create_producer()
-consumer = create_consumer('app_activity')
-
-stop_event = threading.Event()
-
-# Use ThreadPoolExecutor to manage concurrent execution of producer and consumer
-with concurrent.futures.ThreadPoolExecutor() as executor:
-    executor.submit(start_kafka_producer, producer, stop_event)
-    executor.submit(start_kafka_consumer, consumer)
-
-# To stop the threads gracefully
-stop_event.set()
-
+# Fetch data from MySQL
 def fetch_data(start_date: str, end_date: str) -> pd.DataFrame:
     """Fetch data from the database within the specified date range."""
     try:
@@ -70,7 +74,50 @@ def fetch_data(start_date: str, end_date: str) -> pd.DataFrame:
             GROUP BY c.customer_id, c.age, c.tenure, c.monthly_usage;
             """
             events_df = pd.read_sql(query, connection, params={'start_date': start_date, 'end_date': end_date})
+            return events_df
     except mysql.connector.Error as err:
-        logging.error(f"Error: {err}")
+        logging.error(f"Database error: {err}")
         return pd.DataFrame()
-    return events_df
+
+# Flask API Endpoints
+@app.route("/predict", methods=["POST"])
+def predict():
+    """Predict churn based on input data."""
+    if not rf_model:
+        return jsonify({"error": "Model not loaded"}), 500
+    
+    try:
+        data = request.json
+        input_df = pd.DataFrame([data])  # Convert input data to DataFrame
+        prediction = rf_model.predict_proba(input_df)[0][1]  # Probability of churn
+        return jsonify({"churn_risk": prediction})
+    except Exception as e:
+        logging.error(f"Prediction error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/fetch-data", methods=["GET"])
+def fetch():
+    """Fetch data from the database."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    if not (start_date and end_date):
+        return jsonify({"error": "start_date and end_date are required"}), 400
+    
+    data = fetch_data(start_date, end_date)
+    return data.to_json(orient="records")
+
+# Start Kafka threads in daemon mode
+def start_threads():
+    producer_thread = threading.Thread(target=start_kafka_producer, args=(producer, stop_event), daemon=True)
+    consumer_thread = threading.Thread(target=start_kafka_consumer, args=(consumer,), daemon=True)
+    producer_thread.start()
+    consumer_thread.start()
+
+if __name__ == "__main__":
+    try:
+        start_threads()
+        app.run(host="0.0.0.0", port=5000, debug=True)
+    except KeyboardInterrupt:
+        logging.info("Shutting down...")
+        stop_event.set()
