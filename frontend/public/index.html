@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self';">
     <title>Churn Prediction</title>
 </head>
 <body>
@@ -25,8 +26,13 @@
             const data = await response.json();
             document.getElementById('output').innerText = JSON.stringify(data, null, 2);
         } catch (error) {
-            console.error('Fetch error:', error);
-            document.getElementById('output').innerText = 'An error occurred while fetching data.';
+            if (error instanceof SyntaxError) {
+                console.error('JSON parsing error:', error);
+                document.getElementById('output').innerText = 'An error occurred while parsing data.';
+            } else {
+                console.error('Fetch error:', error);
+                document.getElementById('output').innerText = 'An error occurred while fetching data.';
+            }
         }
     }
 </script>
