@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self';">
+    <title>Churn Prediction</title>
+</head>
+<body>
+    <h1>Churn Prediction</h1>
+    <button onclick="fetchAtRiskCustomers('January')">January</button>
+    <button onclick="fetchAtRiskCustomers('February')">February</button>
+    <div id="output" style="margin-top: 20px; white-space: pre-wrap;"></div>
+</body>
+<script>
+    async function fetchAtRiskCustomers(month) {
+        try {
+            const response = await fetch('/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ month: month })
+            });
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            const data = await response.json();
+            document.getElementById('output').innerText = JSON.stringify(data, null, 2);
+        } catch (error) {
+            if (error instanceof SyntaxError) {
+                console.error('JSON parsing error:', error);
+                document.getElementById('output').innerText = 'An error occurred while parsing data.';
+            } else {
+                console.error('Fetch error:', error);
+                document.getElementById('output').innerText = 'An error occurred while fetching data.';
+            }
+        }
+    }
+</script>
+</html>
