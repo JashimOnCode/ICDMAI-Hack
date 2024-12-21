@@ -2,11 +2,14 @@ import threading
 import schedule
 import logging
 import time
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import joblib
 import os
 import pandas as pd
+import numpy as np
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 import mysql.connector
 from pipeline.kafka_producer import create_producer, produce_events
 from pipeline.kafka_consumer import create_consumer, consume_events
@@ -47,9 +50,8 @@ def start_kafka_consumer(consumer):
     logging.info("Starting Kafka consumer...")
     consume_events(consumer)
 
-# Fetch data from MySQL
-def fetch_data(start_date: str, end_date: str) -> pd.DataFrame:
-    """Fetch data from the database within the specified date range."""
+# Function to fetch data from the database and make predictions
+def fetch_and_predict(start_date, end_date):
     try:
         with mysql.connector.connect(
             host=os.getenv('DB_HOST', 'localhost'),
@@ -74,38 +76,60 @@ def fetch_data(start_date: str, end_date: str) -> pd.DataFrame:
             GROUP BY c.customer_id, c.age, c.tenure, c.monthly_usage;
             """
             events_df = pd.read_sql(query, connection, params={'start_date': start_date, 'end_date': end_date})
-            return events_df
+
+        # Data preprocessing
+        imputer = SimpleImputer(strategy='mean')
+        scaler = StandardScaler()
+
+        features = ['age', 'tenure', 'monthly_usage', 'complaints', 'returns',
+                    'emails_opened', 'daily_logins', 'sensor_triggers']
+
+        events_df[features] = imputer.fit_transform(events_df[features])
+        events_df[features] = scaler.fit_transform(events_df[features])
+
+        events_df = events_df.rename(columns={
+            'age': 'Age',
+            'tenure': 'Tenure',
+            'monthly_usage': 'Monthly_Usage',
+            'complaints': 'Complaints',
+            'returns': 'Returns',
+            'emails_opened': 'Emails_Opened',
+            'daily_logins': 'Daily_Logins',
+            'sensor_triggers': 'Sensor_Triggers'
+        })
+
+        # Make predictions
+        X_predict = events_df[['Age', 'Tenure', 'Monthly_Usage', 'Complaints',
+                               'Returns', 'Emails_Opened', 'Daily_Logins', 'Sensor_Triggers']]
+        events_df['Churn_Prediction'] = rf_model.predict(X_predict)
+
+        # Return only at-risk customers
+        at_risk_customers = events_df[events_df['Churn_Prediction'] == 1]
+        return at_risk_customers[['customer_id']].to_dict(orient='records')
+
     except mysql.connector.Error as err:
         logging.error(f"Database error: {err}")
-        return pd.DataFrame()
+        return []
 
-# Flask API Endpoints
-@app.route("/predict", methods=["POST"])
+# Route for the homepage
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# Route for predictions
+@app.route('/predict', methods=['POST'])
 def predict():
-    """Predict churn based on input data."""
     if not rf_model:
         return jsonify({"error": "Model not loaded"}), 500
-    
-    try:
-        data = request.json
-        input_df = pd.DataFrame([data])  # Convert input data to DataFrame
-        prediction = rf_model.predict_proba(input_df)[0][1]  # Probability of churn
-        return jsonify({"churn_risk": prediction})
-    except Exception as e:
-        logging.error(f"Prediction error: {e}")
-        return jsonify({"error": str(e)}), 500
 
-@app.route("/fetch-data", methods=["GET"])
-def fetch():
-    """Fetch data from the database."""
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    
-    if not (start_date and end_date):
-        return jsonify({"error": "start_date and end_date are required"}), 400
-    
-    data = fetch_data(start_date, end_date)
-    return data.to_json(orient="records")
+    month = request.json.get('month')
+    if month == 'January':
+        start_date = '2024-01-01'
+        end_date = '2024-02-01'
+    # Add similar conditions for other months
+
+    at_risk_customers = fetch_and_predict(start_date, end_date)
+    return jsonify(at_risk_customers)
 
 # Start Kafka threads in daemon mode
 def start_threads():
