@@ -11,8 +11,12 @@ import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 import mysql.connector
-from pipeline.kafka_producer import create_producer, produce_events
-from pipeline.kafka_consumer import create_consumer, consume_events
+import kafka_producer as kp
+import kafka_consumer as kc
+import spark_processing as sp
+
+# Logging setup
+logging.basicConfig(level=logging.INFO)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -28,19 +32,16 @@ except FileNotFoundError:
     rf_model = None
 
 # Kafka producer and consumer
-producer = create_producer()
-consumer = create_consumer('app_activity')
+producer = kp.create_producer()
+consumer = kc.create_consumer('app_activity')
 
 # Stop event for threads
 stop_event = threading.Event()
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
-
 # Kafka Producer Thread
 def start_kafka_producer(producer, stop_event):
     logging.info("Starting Kafka producer...")
-    schedule.every(1).seconds.do(lambda: produce_events(producer, stop_event))
+    schedule.every(1).seconds.do(lambda: kp.produce_events(producer, stop_event))
     while not stop_event.is_set():
         schedule.run_pending()
         time.sleep(1)
@@ -48,7 +49,12 @@ def start_kafka_producer(producer, stop_event):
 # Kafka Consumer Thread
 def start_kafka_consumer(consumer):
     logging.info("Starting Kafka consumer...")
-    consume_events(consumer)
+    kc.consume_events(consumer)
+
+# Spark Stream Processing Thread
+def start_spark_processing():
+    logging.info("Starting Spark stream processing...")
+    sp.process_stream()
 
 # Function to fetch data from the database and make predictions
 def fetch_and_predict(start_date, end_date):
@@ -122,21 +128,36 @@ def predict():
     if not rf_model:
         return jsonify({"error": "Model not loaded"}), 500
 
+    month_to_date = {
+        'January': ('2024-01-01', '2024-02-01'),
+        'February': ('2024-02-01', '2024-03-01'),
+        'March': ('2024-03-01', '2024-04-01'),
+        'April': ('2024-04-01', '2024-05-01'),
+        'May': ('2024-05-01', '2024-06-01'),
+        'June': ('2024-06-01', '2024-07-01'),
+        'July': ('2024-07-01', '2024-08-01'),
+        'August': ('2024-08-01', '2024-09-01'),
+        'September': ('2024-09-01', '2024-10-01'),
+        'October': ('2024-10-01', '2024-11-01'),
+        'November': ('2024-11-01', '2024-12-01'),
+        'December': ('2024-12-01', '2025-01-01')
+    }
+
     month = request.json.get('month')
-    if month == 'January':
-        start_date = '2024-01-01'
-        end_date = '2024-02-01'
-    # Add similar conditions for other months
+    start_date, end_date = month_to_date.get(month, (None, None))
 
     at_risk_customers = fetch_and_predict(start_date, end_date)
     return jsonify(at_risk_customers)
 
-# Start Kafka threads in daemon mode
+# Start Kafka and Spark threads in daemon mode
 def start_threads():
     producer_thread = threading.Thread(target=start_kafka_producer, args=(producer, stop_event), daemon=True)
     consumer_thread = threading.Thread(target=start_kafka_consumer, args=(consumer,), daemon=True)
+    spark_thread = threading.Thread(target=start_spark_processing, daemon=True)
+
     producer_thread.start()
     consumer_thread.start()
+    spark_thread.start()
 
 if __name__ == "__main__":
     try:
