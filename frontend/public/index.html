@@ -3,37 +3,155 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self';">
-    <title>Churn Prediction</title>
+    <title>Customer Churn Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
 <body>
-    <h1>Churn Prediction</h1>
-    <button onclick="fetchAtRiskCustomers('January')">January</button>
-    <button onclick="fetchAtRiskCustomers('February')">February</button>
-    <div id="output" style="margin-top: 20px; white-space: pre-wrap;"></div>
-</body>
-<script>
-    async function fetchAtRiskCustomers(month) {
-        try {
-            const response = await fetch('/predict', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ month: month })
-            });
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-            const data = await response.json();
-            document.getElementById('output').innerText = JSON.stringify(data, null, 2);
-        } catch (error) {
-            if (error instanceof SyntaxError) {
-                console.error('JSON parsing error:', error);
-                document.getElementById('output').innerText = 'An error occurred while parsing data.';
-            } else {
-                console.error('Fetch error:', error);
-                document.getElementById('output').innerText = 'An error occurred while fetching data.';
+    <div class="container my-4">
+        <h1 class="text-center">Customer Churn Dashboard</h1>
+        
+        <!-- Table Section -->
+        <div class="table-responsive">
+            <table class="table table-striped" id="customer-table">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Customer</th>
+                        <th>Age</th>
+                        <th>Tenure</th>
+                        <th>Monthly Usage</th>
+                        <th>Complaints</th>
+                        <th>Returns</th>
+                        <th>Email Opens</th>
+                        <th>Daily Logins</th>
+                        <th>Sensor Triggers</th>
+                        <th>Event Timestamp</th>
+                        <th>Churn</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Data will be populated here dynamically -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Visualization Section -->
+        <div class="my-4">
+            <h2>Visualizations</h2>
+            <div class="row">
+                <div class="col-md-6">
+                    <canvas id="churn-risk-chart"></canvas>
+                </div>
+                <div class="col-md-6">
+                    <canvas id="customer-behavior-trends"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // REST API URL (example URL, replace with actual endpoint)
+        const API_URL = "https://example.com/api/customer-data";
+
+        // Fetch and update table data
+        async function updateTable() {
+            try {
+                const response = await axios.get(API_URL);
+                const data = response.data;
+
+                const tableBody = document.querySelector('#customer-table tbody');
+                tableBody.innerHTML = '';
+
+                data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${row.Customer}</td>
+                        <td>${row.Age}</td>
+                        <td>${row.Tenure}</td>
+                        <td>${row.Monthly_Usage}</td>
+                        <td>${row.Complaints}</td>
+                        <td>${row.Returns}</td>
+                        <td>${row.Email_Op}</td>
+                        <td>${row.Daily_logins}</td>
+                        <td>${row.Sensor_Triggers}</td>
+                        <td>${row.Event_Timestamp}</td>
+                        <td>${row.Churn}</td>
+                    `;
+                    tableBody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error("Error fetching table data:", error);
             }
         }
-    }
-</script>
+
+        // Initialize charts
+        const churnRiskCtx = document.getElementById('churn-risk-chart').getContext('2d');
+        const behaviorTrendsCtx = document.getElementById('customer-behavior-trends').getContext('2d');
+
+        const churnRiskChart = new Chart(churnRiskCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Churn Risk Over Time',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: true
+                }]
+            }
+        });
+
+        const behaviorTrendsChart = new Chart(behaviorTrendsCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Complaints', 'Returns', 'Email Opens', 'Daily Logins', 'Sensor Triggers'],
+                datasets: [{
+                    label: 'Customer Behavior Trends',
+                    data: [],
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            }
+        });
+
+        // Fetch and update chart data
+        async function updateCharts() {
+            try {
+                const response = await axios.get(API_URL);
+                const data = response.data;
+
+                // Update churn risk chart
+                const timestamps = data.map(row => row.Event_Timestamp);
+                const churnRisks = data.map(row => row.Churn);
+                churnRiskChart.data.labels = timestamps;
+                churnRiskChart.data.datasets[0].data = churnRisks;
+                churnRiskChart.update();
+
+                // Update behavior trends chart
+                const averages = {
+                    Complaints: data.reduce((sum, row) => sum + row.Complaints, 0) / data.length,
+                    Returns: data.reduce((sum, row) => sum + row.Returns, 0) / data.length,
+                    Email_Op: data.reduce((sum, row) => sum + row.Email_Op, 0) / data.length,
+                    Daily_logins: data.reduce((sum, row) => sum + row.Daily_logins, 0) / data.length,
+                    Sensor_Triggers: data.reduce((sum, row) => sum + row.Sensor_Triggers, 0) / data.length
+                };
+                behaviorTrendsChart.data.datasets[0].data = Object.values(averages);
+                behaviorTrendsChart.update();
+            } catch (error) {
+                console.error("Error fetching chart data:", error);
+            }
+        }
+
+        // Initial data load and setup periodic updates
+        updateTable();
+        updateCharts();
+        setInterval(() => {
+            updateTable();
+            updateCharts();
+        }, 5000); // Update every 5 seconds
+    </script>
+</body>
 </html>
